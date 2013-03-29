@@ -6,23 +6,25 @@
 #include "Routine_switcher.h"
 
 
-//////// Globals //////////
+//////// Globals that a casual user can edit //////////
 
 #define dataPin 2  // Yellow wire on Adafruit Pixels
 #define clockPin 3   // Green wire on Adafruit Pixels
 #define switchPin 4
-#define stripLen 20
+#define rgbOrder WS2801_GRB // Specifies the color ordering the LED strip expects. Possible values defined in Zoa_WS2801.h - currently GRB, BGR, RGB
+#define stripLen 20 // Length of LED strip
 
-const byte update_frequency = 30; // how often to update the LEDs
+// How often to update the LEDs (ms). The strip updating takes ~0.1ms for each LED in the strip, so 30ms
+// should allow enough time for a maximum strip length of 240 (with some extra wiggle room)
+const byte update_frequency = 30;
+unsigned long int switch_after = 180000; // swap routines after this many milliseconds
+int fade_time = 1000; // How quickly the lights fade in/out on button press/release (ms)
+
+//////// Globals that a casual user probably shouldn't edit //////////
+
 volatile unsigned long int interrupt_counter; // updates every time the interrupt timer overflows
 unsigned long int prev_interrupt_counter; // the main loop uses this to detect when the interrupt counter has changed 
 
-// track button-presses
-unsigned long int last_button_press;
-const unsigned long int DEBOUNCE_INTERVAL = 0;//1000;
-const byte MULTIPLIER = 3; // how much to speed up the button when pressed (not currently in use)
-
-unsigned long int switch_after; // swap routines after this many milliseconds
 unsigned int active_routine; // matches the #s from the switch statement in the main loop
 rgbInfo_t (*get_next_color)(); // pointer to current led-updating function within this sketch
 
@@ -31,19 +33,16 @@ rgbInfo_t (*get_next_color)(); // pointer to current led-updating function withi
 void (Zoa_WS2801::* library_update)(rgbInfo_t); 
 
 // Set the first variable to the NUMBER of pixels. 25 = 25 pixels in a row
-Zoa_WS2801 strip = Zoa_WS2801(stripLen, dataPin, clockPin, WS2801_GRB);
+Zoa_WS2801 strip = Zoa_WS2801(stripLen, dataPin, clockPin, rgbOrder);
 
 // Pointers to some waveform objects - currently they're reallocated each time the routine changes
 #define WAVES 6
 Waveform_generator* waves[WAVES]={};
 
-White_noise_generator twinkles( 255, 255, 5, 8, 0 );
-
 Routine_switcher order;
 byte startle_counter;
 
 float fade_fraction; // global variable in [0-1] range used for monitoring where we are in the button fade-in/fade-out
-int fade_time; // milliseconds
 float fade_step; // fade step size
 
 boolean transitioning = false;
@@ -52,7 +51,6 @@ boolean transitioning = false;
 
 void setup()
 {
-  Serial.begin(9600);
   strip.begin();
   strip.setAll(rgbInfo_t(0,0,0));
   
@@ -60,21 +58,16 @@ void setup()
   pinMode(switchPin, INPUT);
   digitalWrite(switchPin, HIGH); // sets internal pull-up resistor to keep pin high when button is unpressed
   
-  switch_after = 180000;
   interrupt_counter = switch_after + 1;
   prev_interrupt_counter = interrupt_counter;
   active_routine = 1;
   get_next_color = update_simple;
   library_update = &Zoa_WS2801::pushBack;
-  last_button_press = 0;
   
-  // update the interrupt counter (and thus the LEDs) every 30ms. The strip updating takes ~0.1ms 
-  // for each LED in the strip, and we are assuming a maximum strip length of 240, plus some extra wiggle room.
   MsTimer2::set( update_frequency, &update_interrupt_counter );
   MsTimer2::start();
   
   fade_fraction = 0;
-  fade_time = 1000;
   fade_step = 1.0 / (float(fade_time)/update_frequency);
 }
 
@@ -229,9 +222,9 @@ float adjust_fade_fraction()
 void update()
 {
   adjust_fade_fraction();
-  Serial.println(fade_fraction);
   rgbInfo_t color = fade_color( get_next_color(), fade_fraction );
   (strip.*library_update)( color );
+  /// other functions can take responsibility for actually showing the update by setting the transitioning flag
   if ( !transitioning )
   {
     strip.show();
@@ -289,6 +282,7 @@ rgbInfo_t update_scaled_sum()
 
 //////// Transition functions //////////
 
+/// This is janky and should be redone at some point
 void linear_transition(uint16_t duration)
 {  
   transitioning = true;
