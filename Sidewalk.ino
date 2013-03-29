@@ -42,21 +42,11 @@ White_noise_generator twinkles( 255, 255, 5, 8, 0 );
 Routine_switcher order;
 byte startle_counter;
 
-float fade_fraction;
+float fade_fraction; // global variable in [0-1] range used for monitoring where we are in the button fade-in/fade-out
 int fade_time; // milliseconds
-float fade_step;
+float fade_step; // fade step size
 
 boolean transitioning = false;
-
-
-void allocate_simple_sines()
-{
-  get_next_color = update_simple;
-  waves[0] = new Sine_generator( 0, 15, 1, PI/2 );
-  // all the /3s are a quick way to get the speed looking right while maintaining prime number ratios
-  waves[1] = new Sine_generator( 20, 255, 11/3, 0 );
-  waves[2] = new Sine_generator( 20, 255, 17/3, 0 );
-}
 
 //////// Setup //////////
 
@@ -65,8 +55,10 @@ void setup()
   Serial.begin(9600);
   strip.begin();
   strip.setAll(rgbInfo_t(0,0,0));
+  
+  // initialize button
   pinMode(switchPin, INPUT);
-  digitalWrite(switchPin, HIGH);
+  digitalWrite(switchPin, HIGH); // sets internal pull-up resistor to keep pin high when button is unpressed
   
   switch_after = 180000;
   interrupt_counter = switch_after + 1;
@@ -211,32 +203,27 @@ void loop()
 
 //////// LED display routines //////////
 
+// returns true if button is pressed, false otherwise
 boolean button()
 {
   boolean result = digitalRead(switchPin) == LOW;
   return result;
 }
 
+// called before each update to fade in/out depending on button status
 float adjust_fade_fraction()
 {
-  if ( button() && fade_fraction < 1 )
+  bool button_on = button();
+  if ( button_on && fade_fraction < 1 )
   {
     fade_fraction += fade_step;
     if ( fade_fraction > 1 ) fade_fraction = 1;
   }
-  if ( !button() && fade_fraction > 0 )
+  if ( !button_on && fade_fraction > 0 )
   {
     fade_fraction -= fade_step;
     if ( fade_fraction < 0 ) fade_fraction = 0;
   }
-}
-
-rgbInfo_t fade_color( rgbInfo_t color, float fade_fraction )
-{
-  color.r *= fade_fraction;
-  color.g *= fade_fraction;
-  color.b *= fade_fraction;
-  return color;
 }
 
 void update()
@@ -245,22 +232,6 @@ void update()
   Serial.println(fade_fraction);
   rgbInfo_t color = fade_color( get_next_color(), fade_fraction );
   (strip.*library_update)( color );
-  if ( !transitioning )
-  {
-    strip.show();
-  }
-}
-
-// flashes random white pixels
-void update_fast_twinkles()
-{
-  //twinkles.next_value();
-  //(strip.*library_update)( rgbInfo_t( twinkles.value(), twinkles.value(), twinkles.value() ) );
-  for ( byte i = 0; i < stripLen; ++i )
-  {
-    byte on = random(2)*random(100,MAX_LEVEL);
-    strip.setPixelColor( i, on, on, on );
-  }
   if ( !transitioning )
   {
     strip.show();
@@ -343,8 +314,12 @@ void linear_transition( const rgbInfo& start_value, const rgbInfo& target_value,
      interpolated_value( start_value.r, target_value.r, multiplier ),
      interpolated_value( start_value.g, target_value.g, multiplier ),
      interpolated_value( start_value.b, target_value.b, multiplier )
-     );    
-     adjust_fade_fraction();
+    );
+    /// I'm pretty sure there's a bug here, since start_value and target_value have already been affected
+    /// by fade_color, so we are fading them twice. However, this did not look atrocious during testing,
+    /// and I do not have access to a test rig now so am hesitant to attempt a fix. (I think that dividing the
+    /// rgb values of start_value and target_value by the fade fraction before passing 'em in here would fix it, tho.)
+    adjust_fade_fraction();
     rgbInfo_t color = fade_color( c, fade_fraction );
     (strip.*library_update)(c);
     strip.show();
